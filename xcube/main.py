@@ -250,11 +250,45 @@ class XRaySpectralCube:
 
     def writeto(
         self,
-        name,
+        fileobj,
         output_verify="exception",
         overwrite=False,
         checksum=False,
     ):
+        r"""
+
+        Write the cube to a FITS file. The following parameters are the
+        same as those for `~astropy.io.fits.HDUList.writeto`.
+
+        Parameters
+        ----------
+        fileobj : string, file-like or `pathlib.Path`
+            File to write to.  If a file object, must be opened in a
+            writeable mode.
+
+        output_verify : string
+            Output verification option.  Must be one of ``"fix"``,
+            ``"silentfix"``, ``"ignore"``, ``"warn"``, or
+            ``"exception"``.  May also be any combination of ``"fix"`` or
+            ``"silentfix"`` with ``"+ignore"``, ``"+warn"``, or ``"+exception"``
+            (e.g. ``"fix+warn"``).
+
+        overwrite : bool, optional
+            If ``True``, overwrite the output file if it exists. Raises an
+            ``OSError`` if ``False`` and the output file exists. Default is
+            ``False``.
+
+        checksum : bool
+            When `True` adds both ``DATASUM`` and ``CHECKSUM`` cards
+            to the header of the HDU when written to the file.
+
+        Notes
+        -----
+        gzip, zip and bzip2 compression algorithms are natively supported.
+        Compression mode is determined from the filename extension
+        ('.gz', '.zip' or '.bz2' respectively).  It is also possible to pass a
+        compressed file object, e.g. `gzip.GzipFile`.
+        """
         self.cubehdu.writeto(
-            name, output_verify=output_verify, overwrite=overwrite, checksum=checksum
+            fileobj, output_verify=output_verify, overwrite=overwrite, checksum=checksum
         )
