@@ -1,8 +1,8 @@
 import numpy as np
 from astropy import wcs
 from astropy.io import fits
+from numba import njit, prange
 
-from xcube.lib import _make_cube
 from xcube.utils import mylog
 
 
@@ -37,6 +37,14 @@ def _read_rmf(rmf):
         else:
             raise KeyError("'CHANTYPE' not specified in RMF!!")
     return e_min, e_max, n_ch, cmin, ctype
+
+
+@njit(parallel=True)
+def _make_cube(data, x, y, cidxs, dx, dy, xmin, ymin, nevent):
+    for i in prange(nevent):
+        ix = int((x[i] - xmin) / dx)
+        iy = int((y[i] - ymin) / dy)
+        data[cidxs[i], iy, ix] += 1
 
 
 class XRaySpectralCube:
@@ -196,11 +204,13 @@ class XRaySpectralCube:
 
         mylog.info("Making cube.")
 
-        cube = _make_cube(x, y, cidxs, nx, ny, ne_bins, dx, dy, xmin, ymin)
+        data = np.zeros((ne_bins, ny, nx))
+
+        _make_cube(data, x, y, cidxs, dx, dy, xmin, ymin, x.size)
 
         mylog.info("Done making cube.")
 
-        imhdu = fits.PrimaryHDU(cube)
+        imhdu = fits.PrimaryHDU(data)
 
         imhdu.header["CTYPE1"] = w.wcs.ctype[0]
         imhdu.header["CTYPE2"] = w.wcs.ctype[1]
