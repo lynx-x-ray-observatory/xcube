@@ -48,6 +48,9 @@ class XRaySpectralCube:
         reblock=1,
         width=None,
     ):
+        if not isinstance(reblock, int) or reblock == 0:
+            raise ValueError("\"reblock\" must be an integer and >= 1!")
+
         # Read the RMF information
         e_min, e_max, n_ch, cmin, ctype = _read_rmf(rmffile)
         
@@ -105,20 +108,32 @@ class XRaySpectralCube:
     
         sky_center = w.wcs_pix2world(xctr, yctr, hdu.header[f"TLMIN{xi}"])
 
-        if width is not None:
-            xhw = 0.5*width * (xmax - xmin + 1)
-            yhw = 0.5*width * (ymax - ymin + 1)
-            xmin = int(xctr - 0.5 * xhw)
-            xmax = int(xctr + 0.5 * xhw)
-            ymin = int(yctr - 0.5 * yhw)
-            ymax = int(yctr + 0.5 * yhw)
-    
+        offset = 1 if xmin == 1 else 0
+
+        if width is None:
+            nx = int(xmax - xmin + offset)
+            ny = int(ymax - ymin + offset)
+            if offset:
+                xmin -= 0.5
+                xmax += 0.5
+                ymin -= 0.5
+                ymax += 0.5
+        else:
+            xhw = 0.5*width * (xmax - xmin + offset)
+            yhw = 0.5*width * (ymax - ymin + offset)
+            xmin = int(xctr - 0.5 * xhw) - 0.5
+            xmax = int(xctr + 0.5 * xhw) + 0.5
+            ymin = int(yctr - 0.5 * yhw) - 0.5
+            ymax = int(yctr + 0.5 * yhw) + 0.5
+            nx = int(xmax - xmin)
+            ny = int(ymax - ymin)
+
         # Determine the map pixel size and number of 
         # pixels on a side
         xdel = hdu.header[f"TCDLT{xi}"] * reblock
         ydel = hdu.header[f"TCDLT{yi}"] * reblock
-        nx = int(int(xmax - xmin + 1) // reblock)
-        ny = int(int(ymax - ymin + 1) // reblock)
+        nx //= reblock
+        ny //= reblock
     
         de = (e_max - e_min)[eidxs]
         emid = 0.5 * (e_min + e_max)[eidxs]
@@ -137,15 +152,13 @@ class XRaySpectralCube:
     
         pidxs = np.logical_and(x >= xmin, x <= xmax)
         pidxs &= np.logical_and(y >= ymin, y <= ymax)
-        
-        print(xmin, xmax, ymin, ymax, nx, ny)
-    
+            
         x = x[pidxs]
         y = y[pidxs]
         cidxs = cidxs[pidxs]
         
-        dx = (xmax-xmin + 1) / nx
-        dy = (xmax-xmin + 1) / ny
+        dx = (xmax-xmin) / nx
+        dy = (ymax-ymin) / ny
     
         print("Making cube...")
         
@@ -175,6 +188,10 @@ class XRaySpectralCube:
     
         self.imhdu = imhdu
 
+    @property
+    def shape(self):
+        return self.imhdu.shape
+
     def collapse(self):
         data = self.imhdu.data.sum(axis=0)
         imhdu = fits.PrimaryHDU(data)
@@ -187,5 +204,11 @@ class XRaySpectralCube:
 
         return imhdu
 
-    def writeto(self, outfile, overwrite=True):
-        self.imhdu.writeto(outfile, overwrite=overwrite)
+    def writeto(self,
+        name,
+        output_verify='exception',
+        overwrite=False,
+        checksum=False,
+    ):
+        self.imhdu.writeto(name, output_verify=output_verify,
+                           overwrite=overwrite, checksum=checksum)
