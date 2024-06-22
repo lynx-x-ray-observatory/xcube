@@ -3,6 +3,7 @@ from astropy import wcs
 from astropy.io import fits
 
 from xcube.lib import _make_cube
+from xcube.utils import mylog
 
 
 def _read_rmf(rmf):
@@ -39,6 +40,37 @@ def _read_rmf(rmf):
 
 
 class XRaySpectralCube:
+    r"""
+    Create a spectral cube from an event file and RMF.
+
+    Parameters
+    ----------
+    evtfile : string or `~astropy.io.fits.HDUList`
+        The event file to use.
+    rmffile : string or `~astropy.io.fits.HDUList`
+        The RMF file to use.
+    emin : float, optional
+        The minimum energy to include in the cube, in keV.
+        Default: None, which is equivalent to 0.0 keV.
+    emax : float, optional
+        The maximum energy to include in the cube, in keV.
+        Default: None, which is equivalent to 100.0 keV.
+    tmin : float, optional
+        The minimum time to include in the cube, in seconds.
+        Default: None, which is equivalent to the minimum time
+        in the event file.
+    tmax : float, optional
+        The maximum time to include in the cube, in seconds.
+        Default: None, which is equivalent to the maximum time
+        in the event file.
+    reblock : integer, optional
+        The reblock factor to use. Default: 1.
+    width : float, optional
+        The width of the cube in terms of the width of the
+        region containing the events. Default: None, which
+        is equivalent to the full extent of the event file.
+    """
+
     def __init__(
         self,
         evtfile,
@@ -162,11 +194,11 @@ class XRaySpectralCube:
         dx = (xmax - xmin) / nx
         dy = (ymax - ymin) / ny
 
-        print("Making cube...")
+        mylog.info("Making cube.")
 
         cube = _make_cube(x, y, cidxs, nx, ny, ne_bins, dx, dy, xmin, ymin)
 
-        print("Done making cube...")
+        mylog.info("Done making cube.")
 
         imhdu = fits.PrimaryHDU(cube)
 
