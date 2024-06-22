@@ -210,39 +210,39 @@ class XRaySpectralCube:
 
         mylog.info("Done making cube.")
 
-        imhdu = fits.PrimaryHDU(data)
+        cubehdu = fits.PrimaryHDU(data)
 
-        imhdu.header["CTYPE1"] = w.wcs.ctype[0]
-        imhdu.header["CTYPE2"] = w.wcs.ctype[1]
-        imhdu.header["CTYPE3"] = "ENER"
-        imhdu.header["CRVAL1"] = float(sky_center[0])
-        imhdu.header["CRVAL2"] = float(sky_center[1])
-        imhdu.header["CRVAL3"] = emid[0]
-        imhdu.header["CUNIT1"] = "deg"
-        imhdu.header["CUNIT2"] = "deg"
-        imhdu.header["CUNIT3"] = "keV"
-        imhdu.header["CDELT1"] = xdel
-        imhdu.header["CDELT2"] = ydel
-        imhdu.header["CDELT3"] = de[0]
-        imhdu.header["CRPIX1"] = 0.5 * (nx + 1)
-        imhdu.header["CRPIX2"] = 0.5 * (ny + 1)
-        imhdu.header["CRPIX3"] = 1
+        cubehdu.header["CTYPE1"] = w.wcs.ctype[0]
+        cubehdu.header["CTYPE2"] = w.wcs.ctype[1]
+        cubehdu.header["CTYPE3"] = "ENER"
+        cubehdu.header["CRVAL1"] = float(sky_center[0])
+        cubehdu.header["CRVAL2"] = float(sky_center[1])
+        cubehdu.header["CRVAL3"] = emid[0]
+        cubehdu.header["CUNIT1"] = "deg"
+        cubehdu.header["CUNIT2"] = "deg"
+        cubehdu.header["CUNIT3"] = "keV"
+        cubehdu.header["CDELT1"] = xdel
+        cubehdu.header["CDELT2"] = ydel
+        cubehdu.header["CDELT3"] = de[0]
+        cubehdu.header["CRPIX1"] = 0.5 * (nx + 1)
+        cubehdu.header["CRPIX2"] = 0.5 * (ny + 1)
+        cubehdu.header["CRPIX3"] = 1
 
-        imhdu.name = "FLUX"
+        cubehdu.name = "FLUX"
 
-        self.imhdu = imhdu
+        self.cubehdu = cubehdu
 
     @property
     def shape(self):
-        return self.imhdu.shape
+        return self.cubehdu.shape
 
     def collapse(self):
-        data = self.imhdu.data.sum(axis=0)
+        data = self.cubehdu.data.sum(axis=0)
         imhdu = fits.PrimaryHDU(data)
 
         for key in ["CTYPE", "CRVAL", "CUNIT", "CDELT", "CRPIX"]:
             for i in range(1, 3):
-                imhdu.header[f"{key}{i}"] = self.imhdu.header[f"{key}{i}"]
+                imhdu.header[f"{key}{i}"] = self.cubehdu.header[f"{key}{i}"]
 
         imhdu.name = "FLUX"
 
@@ -255,6 +255,6 @@ class XRaySpectralCube:
         overwrite=False,
         checksum=False,
     ):
-        self.imhdu.writeto(
+        self.cubehdu.writeto(
             name, output_verify=output_verify, overwrite=overwrite, checksum=checksum
         )
