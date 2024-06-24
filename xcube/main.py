@@ -89,6 +89,7 @@ class XRaySpectralCube:
         tmax=None,
         reblock=1,
         width=None,
+        adaptive_bins=None,
     ):
         if not isinstance(reblock, int) or reblock == 0:
             raise ValueError('"reblock" must be an integer and >= 1!')
@@ -110,13 +111,50 @@ class XRaySpectralCube:
             tmax = t.max()
         idxs = np.logical_and(t >= tmin, t <= tmax)
 
-        # Filter on energy if required
+        # Filter on energy
         if emin is None:
             emin = 0.0
         if emax is None:
             emax = 100.0
-        eidxs = (e_min > emin) & (e_max < emax)
-        ne_bins = eidxs.sum()
+
+        c = hdu.data[ctype.upper()][idxs]
+
+        channels = np.arange(n_ch) + cmin
+
+        if adaptive_bins is None:
+            eidxs = (e_min > emin) & (e_max < emax)
+            ne_bins = eidxs.sum()
+            e_min = e_min[eidxs]
+            e_max = e_max[eidxs]
+            cbins = channels[eidxs] - 0.5
+        else:
+            sigma, max_size = adaptive_bins
+            sigma2 = sigma * sigma
+            y = np.bincount(c.astype("int"), minlength=n_ch + cmin)[cmin:]
+            ebins = []
+            cbins = []
+            sum = 0.0
+            max_size = 0
+            for i in range(y.size):
+                if e_min[i] > emin and e_max[i] < emax:
+                    if len(ebins) == 0:
+                        ebins.append(e_min[i])
+                        cbins.append(channels[i])
+                    else:
+                        sum += y[i]
+                        max_size += 1
+                        if sum >= sigma2 or i == y.size - 1:
+                            ebins.append(e_max[i])
+                            cbins.append(channels[i] + 1)
+                            sum = 0.0
+                            max_size = 0
+            e_min = np.array(ebins[:-1])
+            e_max = np.array(ebins[1:])
+            cbins = np.array(cbins) - 0.5
+            ne_bins = e_min.size
+
+        de = e_max - e_min
+        emid = 0.5 * (e_min + e_max)
 
         # Figure out which columns have the
         # coordinate information
@@ -177,13 +215,7 @@ class XRaySpectralCube:
         nx //= reblock
         ny //= reblock
 
-        de = (e_max - e_min)[eidxs]
-        emid = 0.5 * (e_min + e_max)[eidxs]
-        cbins = np.arange(n_ch) + cmin - 0.5
-
-        c = hdu.data[ctype.upper()][idxs]
-
-        cidxs = np.searchsorted(cbins[eidxs], c)
+        cidxs = np.searchsorted(cbins, c)
 
         good = (cidxs > 0) & (cidxs < ne_bins)
 
