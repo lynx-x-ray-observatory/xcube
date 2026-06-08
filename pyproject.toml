@@ -1,16 +1,16 @@
 [build-system]
 requires = [
-    "setuptools>=45",
-    "setuptools_scm[toml]>=6.2",
+    "setuptools>=61.2",
+    "setuptools_scm[toml]>=7.0.1",
     # see https://github.com/numpy/numpy/pull/18389
     "wheel>=0.36.2",
-    "oldest-supported-numpy",
+    "numpy",
 ]
 
 [project]
 name = "xcube"
 dynamic = ["version"]
-requires-python = ">=3.9.2"
+requires-python = ">=3.11"
 description = "Simulated Observations of X-ray Sources"
 authors = [
     { name = "John ZuHone", email = "jzuhone@gmail.com" },
@@ -22,11 +22,11 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
-    "numpy<2",
     "astropy>=4.0",
     "tqdm",
     "scipy",
     "numba",
+    "numpy",
 ]
 
 [tool.setuptools_scm]

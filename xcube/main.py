@@ -1,6 +1,6 @@
 import numpy as np
-from astropy import wcs
 from astropy.io import fits
+from astropy.wcs import WCS
 from numba import njit, prange
 
 from xcube.utils import mylog
@@ -79,8 +79,92 @@ class XRaySpectralCube:
         is equivalent to the full extent of the event file.
     """
 
-    def __init__(
-        self,
+    def __init__(self, filename, hdu_index=0):
+        if isinstance(filename, (fits.PrimaryHDU, fits.ImageHDU)):
+            hdu = filename
+        elif isinstance(filename, str):
+            with fits.open(filename) as hdul:
+                hdu = hdul[hdu_index]
+
+        data = np.array(hdu.data, dtype=float)
+        header = dict(hdu.header)  # plain dict — units read before WCS normalises them
+
+        if data.ndim < 3:
+            raise ValueError(
+                f"HDU {hdu_index} has {data.ndim} dimensions; need at least 3"
+            )
+        # Take first plane of any extra leading axes (e.g. Stokes)
+        while data.ndim > 3:
+            data = data[0]
+
+        try:
+            wcs = WCS(hdu.header, naxis=3)
+        except Exception:
+            wcs = None
+
+        spec_numpy_axis = self._find_spectral_axis(wcs, data.ndim)
+        if spec_numpy_axis != 0:
+            data = np.moveaxis(data, spec_numpy_axis, 0)
+
+        self._data = data
+        self._wcs = wcs
+        self._spectral_fits_axis = (
+            int(wcs.wcs.spec) if wcs is not None and wcs.wcs.spec >= 0 else None
+        )
+        self._spectral_coords = self._build_spectral_coords(header)
+        self._spectral_unit = self._read_spectral_unit(header)
+        self._channel_width = self._read_channel_width(header)
+        self._bunit = str(header.get("BUNIT", "")).strip()
+
+    def _find_spectral_axis(self, wcs, ndim):
+        """Return the numpy axis index (0-based) that carries the spectral axis."""
+        if wcs is not None and wcs.wcs.spec >= 0:
+            # wcs.wcs.spec is 0-based in FITS pixel order (0 == NAXIS1 == fastest).
+            # numpy reverses axis order, so numpy_axis = ndim - 1 - fits_axis.
+            return ndim - 1 - int(wcs.wcs.spec)
+        return 0  # safe default for typical (spectral, y, x) FITS cubes
+
+    def _build_spectral_coords(self, header):
+        n = self._data.shape[0]
+        if self._spectral_fits_axis is None:
+            return np.arange(n, dtype=float)
+
+        # FITS keywords are 1-based; spectral_fits_axis is 0-based.
+        ax = self._spectral_fits_axis + 1
+        crpix = float(header.get(f"CRPIX{ax}", 1)) - 1  # convert to 0-based
+        crval = float(header.get(f"CRVAL{ax}", 0))
+        # Prefer CDELTn; fall back to CD matrix diagonal
+        if f"CDELT{ax}" in header:
+            cdelt = float(header[f"CDELT{ax}"])
+        elif f"CD{ax}_{ax}" in header:
+            cdelt = float(header[f"CD{ax}_{ax}"])
+        else:
+            cdelt = 1.0
+        return crval + (np.arange(n, dtype=float) - crpix) * cdelt
+
+    def _read_spectral_unit(self, header):
+        if self._spectral_fits_axis is None:
+            return "pixel"
+        ax = self._spectral_fits_axis + 1
+        unit = str(header.get(f"CUNIT{ax}", "")).strip()
+        return unit if unit else "pixel"
+
+    def _read_channel_width(self, header):
+        """Absolute channel width in spectral_unit units."""
+        if self._spectral_fits_axis is None:
+            return 1.0
+        ax = self._spectral_fits_axis + 1
+        if f"CDELT{ax}" in header:
+            return abs(float(header[f"CDELT{ax}"]))
+        if f"CD{ax}_{ax}" in header:
+            return abs(float(header[f"CD{ax}_{ax}"]))
+        if self._data.shape[0] > 1:
+            return abs(float(self._spectral_coords[1] - self._spectral_coords[0]))
+        return 1.0
+
+    @classmethod
+    def from_event_file(
+        cls,
         evtfile,
         rmffile,
         emin=None,
@@ -169,8 +253,8 @@ class XRaySpectralCube:
             if xi and yi:
                 break
 
-        # Get the WCS for the event file.
-        w = wcs.WCS(naxis=2)
+        # Get the WCS from the event file.
+        w = WCS(naxis=2)
         w.wcs.ctype = [hdu.header[f"TCTYP{xi}"], hdu.header[f"TCTYP{yi}"]]
         w.wcs.crpix = [hdu.header[f"TCRPX{xi}"], hdu.header[f"TCRPX{yi}"]]
         w.wcs.cunit = [hdu.header[f"TCUNI{xi}"], hdu.header[f"TCUNI{yi}"]]
@@ -244,30 +328,69 @@ class XRaySpectralCube:
 
         cubehdu = fits.PrimaryHDU(data)
 
-        cubehdu.header["CTYPE1"] = w.wcs.ctype[0]
-        cubehdu.header["CTYPE2"] = w.wcs.ctype[1]
-        cubehdu.header["CTYPE3"] = "ENER"
-        cubehdu.header["CRVAL1"] = float(sky_center[0])
-        cubehdu.header["CRVAL2"] = float(sky_center[1])
-        cubehdu.header["CRVAL3"] = emid[0]
-        cubehdu.header["CUNIT1"] = "deg"
+        cubehdu.header["CTYPE1"] = "ENER"
+        cubehdu.header["CTYPE2"] = w.wcs.ctype[0]
+        cubehdu.header["CTYPE3"] = w.wcs.ctype[1]
+        cubehdu.header["CRVAL1"] = emid[0]
+        cubehdu.header["CRVAL2"] = float(sky_center[0])
+        cubehdu.header["CRVAL3"] = float(sky_center[1])
+        cubehdu.header["CUNIT1"] = "keV"
         cubehdu.header["CUNIT2"] = "deg"
-        cubehdu.header["CUNIT3"] = "keV"
-        cubehdu.header["CDELT1"] = xdel
-        cubehdu.header["CDELT2"] = ydel
-        cubehdu.header["CDELT3"] = de[0]
-        cubehdu.header["CRPIX1"] = 0.5 * (nx + 1)
-        cubehdu.header["CRPIX2"] = 0.5 * (ny + 1)
-        cubehdu.header["CRPIX3"] = 1
+        cubehdu.header["CUNIT3"] = "deg"
+        cubehdu.header["CDELT1"] = de[0]
+        cubehdu.header["CDELT2"] = xdel
+        cubehdu.header["CDELT3"] = ydel
+        cubehdu.header["CRPIX1"] = 1
+        cubehdu.header["CRPIX2"] = 0.5 * (nx + 1)
+        cubehdu.header["CRPIX3"] = 0.5 * (ny + 1)
 
         cubehdu.name = "FLUX"
 
-        self.cubehdu = cubehdu
+        return cls(cubehdu)
 
     @property
     def shape(self):
-        return self.cubehdu.shape
+        """(n_channels, ny, nx)"""
+        return self._data.shape
 
+    @property
+    def n_channels(self):
+        return self._data.shape[0]
+
+    @property
+    def spectral_coords(self):
+        """1D array of spectral coordinate values (length == n_channels)."""
+        return self._spectral_coords
+
+    @property
+    def spectral_unit(self):
+        """String label for the spectral axis unit."""
+        return self._spectral_unit
+
+    @property
+    def channel_width(self):
+        """Absolute width of one spectral channel in spectral_unit units."""
+        return self._channel_width
+
+    @property
+    def bunit(self):
+        """Raw BUNIT string from the FITS header (spectral density unit)."""
+        return self._bunit
+
+    @property
+    def spectrum_unit(self):
+        """
+        Unit of integrated spectra (BUNIT × spectral_unit).
+
+        Derived by stripping the trailing '/<spectral_unit>' from BUNIT if
+        present; e.g. 'count/s/keV' with spectral_unit='keV' → 'count/s'.
+        """
+        suffix = f"/{self._spectral_unit}"
+        if self._bunit.endswith(suffix):
+            return self._bunit[: -len(suffix)]
+        return self._bunit or "intensity"
+
+    """
     def collapse(self):
         data = self.cubehdu.data.sum(axis=0)
         imhdu = fits.PrimaryHDU(data)
@@ -279,6 +402,7 @@ class XRaySpectralCube:
         imhdu.name = "FLUX"
 
         return imhdu
+    """
 
     def writeto(
         self,
@@ -324,3 +448,31 @@ class XRaySpectralCube:
         self.cubehdu.writeto(
             fileobj, output_verify=output_verify, overwrite=overwrite, checksum=checksum
         )
+
+    def get_slice(self, channel):
+        """Return the 2D (ny, nx) image at spectral channel *channel*."""
+        return self._data[channel]
+
+    def get_spectrum(self, xi, yi):
+        """Return the 1D spectrum (counts/s) at spatial pixel (xi, yi)."""
+        return self._data[:, int(yi), int(xi)] * self._channel_width
+
+    def get_integrated_spectrum(self):
+        """Return the spectrum (counts/s) summed over all spatial pixels."""
+        return np.nansum(self._data, axis=(1, 2)) * self._channel_width
+
+    def get_region_spectrum(self, mask):
+        """Return the spectrum (counts/s) summed over pixels where *mask* is True."""
+        return np.nansum(self._data[:, mask], axis=1) * self._channel_width
+
+    def get_collapsed_image(self, e_min, e_max):
+        """
+        Return a 2D (ny, nx) image (counts/s) summed over spectral channels
+        within [e_min, e_max].  Returns None if no channels fall in range.
+        """
+        idx = np.where(
+            (self._spectral_coords >= e_min) & (self._spectral_coords <= e_max)
+        )[0]
+        if idx.size == 0:
+            return None
+        return np.nansum(self._data[idx], axis=0) * self._channel_width
