@@ -3,8 +3,6 @@ from astropy.io import fits
 from astropy.wcs import WCS
 from numba import njit, prange
 
-from xcube.utils import mylog
-
 
 def _read_rmf(rmf):
     with fits.open(rmf, memmap=True) as f:
@@ -262,14 +260,6 @@ class XRaySpectralCube:
             if xi and yi:
                 break
 
-        # Get the WCS from the event file.
-        w = WCS(naxis=2)
-        w.wcs.ctype = [hdu.header[f"TCTYP{xi}"], hdu.header[f"TCTYP{yi}"]]
-        w.wcs.crpix = [hdu.header[f"TCRPX{xi}"], hdu.header[f"TCRPX{yi}"]]
-        w.wcs.cunit = [hdu.header[f"TCUNI{xi}"], hdu.header[f"TCUNI{yi}"]]
-        w.wcs.crval = [hdu.header[f"TCRVL{xi}"], hdu.header[f"TCRVL{yi}"]]
-        w.wcs.cdelt = [hdu.header[f"TCDLT{xi}"], hdu.header[f"TCDLT{yi}"]]
-
         # Get the bounds of the coordinates
         xmin = hdu.header[f"TLMIN{xi}"]
         ymin = hdu.header[f"TLMIN{yi}"]
@@ -279,32 +269,42 @@ class XRaySpectralCube:
         xctr = 0.5 * (xmax + xmin)
         yctr = 0.5 * (ymax + ymin)
 
-        sky_center = w.wcs_pix2world(xctr, yctr, hdu.header[f"TLMIN{xi}"])
+        origin = 1 if xmin in [0.5, 1] else 0
+        offset = 1 if xmin in [0, 1] else 0
 
-        offset = 1 if xmin == 1 else 0
+        nx_orig = int(xmax - xmin + offset)
+        ny_orig = int(ymax - ymin + offset)
+
+        dx_orig = hdu.header[f"TCDLT{xi}"]
+        dy_orig = hdu.header[f"TCDLT{yi}"]
+
+        # Get the WCS from the event file.
+        w = WCS(naxis=2)
+        w.wcs.ctype = [hdu.header[f"TCTYP{xi}"], hdu.header[f"TCTYP{yi}"]]
+        w.wcs.crpix = [hdu.header[f"TCRPX{xi}"], hdu.header[f"TCRPX{yi}"]]
+        w.wcs.cunit = [hdu.header[f"TCUNI{xi}"], hdu.header[f"TCUNI{yi}"]]
+        w.wcs.crval = [hdu.header[f"TCRVL{xi}"], hdu.header[f"TCRVL{yi}"]]
+        w.wcs.cdelt = [dx_orig, dy_orig]
+
+        sky_center = w.wcs_pix2world(xctr, yctr, origin)
 
         if width is None:
-            nx = int(xmax - xmin + offset)
-            ny = int(ymax - ymin + offset)
-            if offset:
-                xmin -= 0.5
-                xmax += 0.5
-                ymin -= 0.5
-                ymax += 0.5
+            nx = nx_orig
+            ny = ny_orig
         else:
-            xhw = 0.5 * width * (xmax - xmin + offset)
-            yhw = 0.5 * width * (ymax - ymin + offset)
-            xmin = int(xctr - 0.5 * xhw) - 0.5
-            xmax = int(xctr + 0.5 * xhw) + 0.5
-            ymin = int(yctr - 0.5 * yhw) - 0.5
-            ymax = int(yctr + 0.5 * yhw) + 0.5
+            xhw = 0.5 * width * nx_orig
+            yhw = 0.5 * width * ny_orig
+            xmin = xctr - xhw
+            xmax = xctr + xhw
+            ymin = yctr - yhw
+            ymax = yctr + yhw
             nx = int(xmax - xmin)
             ny = int(ymax - ymin)
 
         # Determine the map pixel size and number of
         # pixels on a side
-        xdel = hdu.header[f"TCDLT{xi}"] * reblock
-        ydel = hdu.header[f"TCDLT{yi}"] * reblock
+        dx = dx_orig * reblock
+        dy = dy_orig * reblock
         nx //= reblock
         ny //= reblock
 
@@ -317,23 +317,18 @@ class XRaySpectralCube:
 
         cidxs = cidxs[good] - 1
 
-        pidxs = np.logical_and(x >= xmin, x <= xmax)
-        pidxs &= np.logical_and(y >= ymin, y <= ymax)
+        # Upper bound is exclusive so an event exactly at xmax/ymax can't bin to
+        # index nx/ny (out of bounds in _make_cube, which has no bounds checking).
+        pidxs = np.logical_and(x >= xmin, x < xmax)
+        pidxs &= np.logical_and(y >= ymin, y < ymax)
 
         x = x[pidxs]
         y = y[pidxs]
         cidxs = cidxs[pidxs]
 
-        dx = (xmax - xmin) / nx
-        dy = (ymax - ymin) / ny
-
-        mylog.info("Making cube.")
-
         data = np.zeros((nx, ny, ne_bins))
 
-        _make_cube(data, x, y, cidxs, dx, dy, xmin, ymin, x.size)
-
-        mylog.info("Done making cube.")
+        _make_cube(data, x, y, cidxs, reblock, reblock, xmin, ymin, x.size)
 
         # _make_cube builds (nx, ny, ne) — numpy axes (x, y, energy).  Transpose
         # to (ne, ny, nx) so the FITS axes are NAXIS1=x (RA), NAXIS2=y (Dec),
@@ -354,8 +349,8 @@ class XRaySpectralCube:
         cubehdu.header["CUNIT1"] = "deg"
         cubehdu.header["CUNIT2"] = "deg"
         cubehdu.header["CUNIT3"] = "keV"
-        cubehdu.header["CDELT1"] = xdel
-        cubehdu.header["CDELT2"] = ydel
+        cubehdu.header["CDELT1"] = dx
+        cubehdu.header["CDELT2"] = dy
         cubehdu.header["CDELT3"] = de[0]
         cubehdu.header["CRPIX1"] = 0.5 * (nx + 1)
         cubehdu.header["CRPIX2"] = 0.5 * (ny + 1)
